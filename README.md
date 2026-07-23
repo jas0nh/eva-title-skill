@@ -24,6 +24,16 @@ node scripts/render-eva-title.mjs \
 
 `e1` 的 `--texts` 顺序是：竖排、横排、顶部副标题。其余版式的文本输入数量与视觉示例见 `vendor/eva-title/html/layout-help.png`。
 
+## Feishu Manual Segments
+
+飞书 adapter 可以用 `|` 指定断句，分隔符会在标点清理和 LLM 分词之前解析，因此不会被吞掉：
+
+```text
+@Friendly AI Assistant /eva --e1 我|讨厌|上班
+```
+
+对 `e1`，三段的顺序固定为：顶部、竖排、横排。上例会显示为“我 / 讨厌 / 上班”。双文本版式使用一个 `|`，例如 `--e26 主标题|副标题`；单文本版式不使用 `|`。每段不能为空，且拼接后必须等于最终标题。
+
 ## Manual Upload Checklist
 
 无法使用 Git 推送时，请手动上传以下文件和目录，并保持目录结构不变：
