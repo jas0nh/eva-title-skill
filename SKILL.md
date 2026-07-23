@@ -25,3 +25,5 @@ Inspect `vendor/eva-title/html/layout-help.png` when choosing among the 16 layou
 The renderer needs Node.js, Playwright and local Chrome. Install an appropriately licensed EVA-Matisse font locally for the closest match; do not add font files to this skill.
 
 `adapters/feishu/` is an optional transport implementation. It is not required when another AI runtime can invoke the bundled CLI directly.
+
+For the Feishu adapter, users can bypass LLM segmentation with `|`. Use `/eva --e1 top|vertical|horizontal`; for example, `/eva --e1 我|讨厌|上班`. Parse the separator before removing punctuation. Two-text layouts accept one separator; one-text layouts do not accept one.
