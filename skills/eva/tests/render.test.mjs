@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { LAYOUTS, toTraditional } from '../scripts/renderer.mjs';
+import { cleanEvaText, parseEvaCommand, rendererTexts, runEvaCommand } from '../scripts/eva-command.mjs';
 
 const cli = new URL('../scripts/render-eva-title.mjs', import.meta.url).pathname;
 const font = join(process.env.HOME, 'Library', 'Fonts', 'FOT-Matisse Pro EB.otf');
@@ -106,4 +107,35 @@ test('e24 geometry matches the original browser Canvas reference', async () => {
   assert.deepEqual([actual.width, actual.height], [reference.width, reference.height]);
   actual.bbox.forEach((value, index) => assert.ok(Math.abs(value - reference.bbox[index]) <= 1));
   assert.ok(Math.abs(actual.count - reference.count) / reference.count < 0.01);
+});
+
+test('parses the Hermes /eva command contract', () => {
+  assert.deepEqual(parseEvaCommand('--help'), { kind: 'help' });
+  assert.equal(parseEvaCommand('领导喜欢安排泡汤局').layout, 'e1');
+  assert.equal(parseEvaCommand('--e26 世界中心').title, '世界中心');
+  assert.equal(cleanEvaText(' 世 界，中 心！'), '世界中心');
+  const manual = parseEvaCommand('/eva --e1 顶部|竖排|横排');
+  assert.deepEqual(manual.manualSegments, ['顶部', '竖排', '横排']);
+  assert.deepEqual(rendererTexts(manual), ['竖排', '横排', '顶部']);
+});
+
+test('command wrapper renders semantic segments and local help media', async () => {
+  const render = await runEvaCommand({
+    command: '--e1 领导喜欢安排泡汤局',
+    outputDir: work,
+    semanticSegments: ['领导', '喜欢安排', '泡汤局'],
+    fontPath: font,
+  });
+  assert.equal(render.kind, 'render');
+  assert.deepEqual(render.texts, ['喜欢安排', '泡汤局', '领导']);
+  assert.equal(existsSync(render.outputPath), true);
+  assert.equal(render.media, `MEDIA:${render.outputPath}`);
+
+  const help = await runEvaCommand({ command: '--help', outputDir: work, fontPath: font });
+  assert.equal(help.kind, 'help');
+  assert.match(help.text, /可用版式：--e1/);
+  assert.equal(help.media, `MEDIA:${help.outputPath}`);
+  const helpPng = readFileSync(help.outputPath);
+  assert.equal(helpPng.readUInt32BE(16), 1440);
+  assert.equal(helpPng.readUInt32BE(20), 1549);
 });

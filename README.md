@@ -16,6 +16,8 @@ hermes skills install jas0nh/eva-title-skill/skills/eva --category self-built
 node scripts/render-eva-title.mjs --layout e24 --texts '["测试"]' --output /tmp/eva-test.png
 ```
 
+Hermes 中安装后会注册 `/eva` skill 命令。支持 `/eva --e24 测试`、`/eva --e1 顶部|竖排|横排` 和 `/eva --help`；命令解析、清洗、断句顺序、帮助总览图及 `MEDIA:` 输出均由 `scripts/eva-command.mjs` 统一处理。
+
 ## 本机字体
 
 该 skill 不携带字体。安装者须拥有 Matisse 使用授权，并将 `FOT-Matisse Pro EB.otf` 安装到当前 macOS 用户的 `~/Library/Fonts/`；同时安装开源的 `SourceHanSerifSC-Heavy.otf`。渲染器会按上游映射先将简体转繁体、优先使用 Matisse，缺字才回退到思源宋体 Heavy；也可以用 `--font` 指向另一个本机 Matisse 文件。字体缺失时渲染会失败，而不是使用无提示的替代字形。

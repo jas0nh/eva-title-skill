@@ -118,7 +118,7 @@ function loadVendorRuntime() {
 export function renderEvaTitle({ layout, texts, fontPath = '' }) {
   if (!layoutInputCount(layout)) throw new Error(`Unknown layout: ${layout}`);
   registerFonts(fontPath);
-  const normalizedTexts = texts.map(toTraditional);
+  const normalizedTexts = texts.map((text) => (typeof text === 'string' ? toTraditional(text) : text));
   const runtime = loadVendorRuntime();
   const vendorLayout = runtime.layouts.find((candidate) => candidate.id === layout);
   if (!vendorLayout) throw new Error(`Vendor layout is unavailable: ${layout}`);
@@ -141,4 +141,15 @@ export function renderEvaTitle({ layout, texts, fontPath = '' }) {
     layout: vendorLayout,
   });
   return outputCanvas.toBuffer('image/png');
+}
+
+export function vendorLayoutDefaults(layout) {
+  if (!layoutInputCount(layout)) throw new Error(`Unknown layout: ${layout}`);
+  const runtime = loadVendorRuntime();
+  const vendorLayout = runtime.layouts.find((candidate) => candidate.id === layout);
+  if (!vendorLayout) throw new Error(`Vendor layout is unavailable: ${layout}`);
+  return vendorLayout.inputs.map((input) => {
+    if (input.type === 'tab') return input.options?.[0]?.value ?? input.options?.[0] ?? 0;
+    return input.placeholder || '';
+  });
 }

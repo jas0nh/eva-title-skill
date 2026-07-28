@@ -1,4 +1,4 @@
 interface:
   display_name: "EVA Title Cards"
-  short_description: "Render original EVA title cards with local Canvas."
-  default_prompt: "Use $eva to render an original EVA title card from my text."
+  short_description: "Handle /eva and render original title-card layouts."
+  default_prompt: "Use $eva to handle /eva --help or render an EVA title card."
