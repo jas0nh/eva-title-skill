@@ -11,7 +11,9 @@ const cli = new URL('../scripts/render-eva-title.mjs', import.meta.url).pathname
 const font = join(process.env.HOME, 'Library', 'Fonts', 'FOT-Matisse Pro EB.otf');
 const work = join(tmpdir(), `eva-skill-test-${process.pid}`);
 const sample = ['测', '试', '标题'];
-const e24BrowserReference = new URL('./fixtures/e24-browser.png', import.meta.url).pathname;
+const e24BrowserReference = JSON.parse(
+  readFileSync(new URL('./fixtures/e24-browser.json', import.meta.url), 'utf8'),
+);
 
 function run(args) {
   return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
@@ -95,7 +97,12 @@ test('e24 geometry matches the original browser Canvas reference', async () => {
   const output = join(work, 'e24-vendor-regression.png');
   assert.equal(run(['--layout', 'e24', '--texts', '["测试"]', '--output', output, '--font', font]).status, 0);
   const actual = await darkPixelStats(output);
-  const reference = await darkPixelStats(e24BrowserReference);
+  const reference = {
+    width: e24BrowserReference.width,
+    height: e24BrowserReference.height,
+    bbox: e24BrowserReference.bbox,
+    count: e24BrowserReference.dark_pixel_count,
+  };
   assert.deepEqual([actual.width, actual.height], [reference.width, reference.height]);
   actual.bbox.forEach((value, index) => assert.ok(Math.abs(value - reference.bbox[index]) <= 1));
   assert.ok(Math.abs(actual.count - reference.count) / reference.count < 0.01);

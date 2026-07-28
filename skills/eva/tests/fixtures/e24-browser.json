@@ -1,0 +1,12 @@
+{
+  "source": "https://lab.magiconch.com/eva-title/?layout=e24",
+  "upstream_commit": "17257ad5c75bca49ed824a005d13d2de1707cfe9",
+  "input": ["测试"],
+  "transformed_input": ["測試"],
+  "width": 640,
+  "height": 480,
+  "dark_pixel_threshold": 80,
+  "bbox": [209, 55, 431, 430],
+  "dark_pixel_count": 44552,
+  "png_sha256": "f8935aa7874c4d9a1ab690c6fc9343cdbe7619681ad3b407e75a73f5323b23c9"
+}
