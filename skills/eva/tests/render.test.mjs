@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,12 +11,13 @@ const cli = new URL('../scripts/render-eva-title.mjs', import.meta.url).pathname
 const font = join(process.env.HOME, 'Library', 'Fonts', 'FOT-Matisse Pro EB.otf');
 const work = join(tmpdir(), `eva-skill-test-${process.pid}`);
 const sample = ['测', '试', '标题'];
+const e24BrowserReference = new URL('./fixtures/e24-browser.png', import.meta.url).pathname;
 
 function run(args) {
   return spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
 }
 
-test('renders every declared layout as a 1280x960 PNG', () => {
+test('renders every declared vendor layout as a 640x480 PNG', () => {
   for (const [layout, count] of Object.entries(LAYOUTS)) {
     const output = join(work, `${layout}.png`);
     const result = run(['--layout', layout, '--texts', JSON.stringify(sample.slice(0, count)), '--output', output, '--font', font]);
@@ -23,8 +25,8 @@ test('renders every declared layout as a 1280x960 PNG', () => {
     assert.equal(existsSync(output), true, layout);
     const png = readFileSync(output);
     assert.equal(png.subarray(1, 4).toString(), 'PNG', layout);
-    assert.equal(png.readUInt32BE(16), 1280, layout);
-    assert.equal(png.readUInt32BE(20), 960, layout);
+    assert.equal(png.readUInt32BE(16), 640, layout);
+    assert.equal(png.readUInt32BE(20), 480, layout);
     assert.ok(png.length > 1000, layout);
   }
   rmSync(work, { recursive: true, force: true });
@@ -61,4 +63,40 @@ test('renders deterministically with a non-background text region', () => {
 
 test('uses the upstream simplified-to-traditional transform before glyph fallback', () => {
   assert.equal(toTraditional('测试'), '測試');
+});
+
+async function darkPixelStats(path) {
+  const image = await loadImage(path);
+  const canvas = createCanvas(image.width, image.height);
+  const context = canvas.getContext('2d');
+  context.drawImage(image, 0, 0);
+  const pixels = context.getImageData(0, 0, image.width, image.height).data;
+  let left = image.width;
+  let top = image.height;
+  let right = 0;
+  let bottom = 0;
+  let count = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    const luminance = pixels[index] * 0.299 + pixels[index + 1] * 0.587 + pixels[index + 2] * 0.114;
+    if (luminance >= 80) continue;
+    const pixel = index / 4;
+    const x = pixel % image.width;
+    const y = Math.floor(pixel / image.width);
+    left = Math.min(left, x);
+    top = Math.min(top, y);
+    right = Math.max(right, x + 1);
+    bottom = Math.max(bottom, y + 1);
+    count += 1;
+  }
+  return { width: image.width, height: image.height, bbox: [left, top, right, bottom], count };
+}
+
+test('e24 geometry matches the original browser Canvas reference', async () => {
+  const output = join(work, 'e24-vendor-regression.png');
+  assert.equal(run(['--layout', 'e24', '--texts', '["测试"]', '--output', output, '--font', font]).status, 0);
+  const actual = await darkPixelStats(output);
+  const reference = await darkPixelStats(e24BrowserReference);
+  assert.deepEqual([actual.width, actual.height], [reference.width, reference.height]);
+  actual.bbox.forEach((value, index) => assert.ok(Math.abs(value - reference.bbox[index]) <= 1));
+  assert.ok(Math.abs(actual.count - reference.count) / reference.count < 0.01);
 });
