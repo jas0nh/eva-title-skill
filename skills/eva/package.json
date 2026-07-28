@@ -1,0 +1,13 @@
+{
+  "name": "hermes-eva-skill",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Native Canvas EVA title-card renderer for Hermes",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "0.1.100"
+  }
+}

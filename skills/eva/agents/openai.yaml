@@ -1,0 +1,4 @@
+interface:
+  display_name: "EVA Title Cards"
+  short_description: "Render local EVA-style title-card PNGs."
+  default_prompt: "Use $eva to render an EVA title card from my text."

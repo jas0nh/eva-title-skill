@@ -6,13 +6,10 @@ from __future__ import annotations
 import argparse
 from collections import deque
 import base64
-import functools
 import hashlib
-import http.server
 import json
 import os
 import re
-import queue
 import shlex
 import shutil
 import signal
@@ -126,11 +123,8 @@ EVA_LAYOUT_MAX_CHARS = {
     "e10": 42,
 }
 EVA_LAYOUT_IDS = tuple(EVA_LAYOUT_TEXT_INPUT_COUNTS)
-DEFAULT_EVA_TITLE_FONT_PATH = "/System/Library/Fonts/Supplemental/Songti.ttc"
+DEFAULT_EVA_TITLE_FONT_PATH = str(Path.home() / "Library/Fonts/FOT-Matisse Pro EB.otf")
 EVA_FALLBACK_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9'_-]*|[\u4e00-\u9fff]{1,2}|[^\s]")
-DEFAULT_EVA_TITLE_PLAYWRIGHT_CLI = Path.home() / ".codex/skills/playwright/scripts/playwright_cli.sh"
-EVA_TITLE_RENDERER_CLIENT: "EvaTitleRendererClient | None" = None
-EVA_TITLE_RENDERER_CLIENT_LOCK = threading.Lock()
 
 
 def now_iso() -> str:
@@ -178,7 +172,6 @@ def load_config(path: Path | None) -> dict[str, str]:
         "OPENAI_EVA_SEGMENTATION_MODEL",
         "EVA_TITLE_LOCAL_DIR",
         "EVA_TITLE_NODE_PATH",
-        "EVA_TITLE_PLAYWRIGHT_MODULE",
             "EVA_TITLE_RENDER_TIMEOUT_SECONDS",
             "EVA_ONLY",
         }:
@@ -198,27 +191,9 @@ def shell_quote(value: str) -> str:
 
 
 def read_keychain_password(service: str, account: str) -> str | None:
-    if not service or not account:
-        return None
-    try:
-        completed = subprocess.run(
-            [
-                "security",
-                "find-generic-password",
-                "-s",
-                service,
-                "-a",
-                account,
-                "-w",
-            ],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return None
-    return completed.stdout.strip() or None
+    """Refuse raw Keychain reads; inject optional adapter credentials externally."""
+    _ = (service, account)
+    return None
 
 
 def responses_url(base_url: str) -> str:
@@ -707,7 +682,7 @@ def split_eva_title_texts(title: str, token_lines: list[list[str]], text_count: 
     return parts
 
 
-def run_playwright_cli(command: list[str], timeout_seconds: int) -> dict[str, Any]:
+def run_local_command(command: list[str], timeout_seconds: int) -> dict[str, Any]:
     try:
         completed = subprocess.run(
             command,
@@ -730,200 +705,10 @@ def run_playwright_cli(command: list[str], timeout_seconds: int) -> dict[str, An
 def default_eva_title_renderer_script() -> Path:
     script_path = Path(__file__).resolve()
     candidates = [
-        script_path.parent / "eva-title-renderer.mjs",
-        script_path.parents[2] / "scripts/eva-title-renderer.mjs",
-        script_path.parent.parent / "scripts/eva-title-renderer.mjs",
+        script_path.parents[2] / "skills/eva/scripts/render-eva-title.mjs",
+        script_path.parent.parent / "skills/eva/scripts/render-eva-title.mjs",
     ]
     return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
-
-
-class EvaTitleRendererClient:
-    def __init__(self, *, asset_dir: Path, node_path: str = "", playwright_module: str = "") -> None:
-        self.asset_dir = asset_dir
-        self.node_path = node_path or shutil.which("node") or "node"
-        self.playwright_module = playwright_module
-        self.process: subprocess.Popen[str] | None = None
-        self.responses: queue.Queue[dict[str, Any]] = queue.Queue()
-        self.stderr_lines: deque[str] = deque(maxlen=30)
-        self.lock = threading.Lock()
-
-    def _read_stdout(self) -> None:
-        assert self.process and self.process.stdout
-        for line in self.process.stdout:
-            try:
-                response = json.loads(line)
-            except json.JSONDecodeError:
-                self.stderr_lines.append(f"invalid renderer response: {line[:500]}")
-                continue
-            if isinstance(response, dict):
-                self.responses.put(response)
-
-    def _read_stderr(self) -> None:
-        assert self.process and self.process.stderr
-        for line in self.process.stderr:
-            self.stderr_lines.append(line.rstrip())
-
-    def _resolve_playwright_module(self) -> str:
-        if self.playwright_module:
-            return self.playwright_module
-        result = subprocess.run(
-            [self.node_path, "-p", "require.resolve('playwright')"],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=15,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            raise RuntimeError(result.stderr.strip() or "Unable to resolve the Playwright module")
-        self.playwright_module = result.stdout.strip()
-        return self.playwright_module
-
-    def _start(self) -> None:
-        renderer_script = default_eva_title_renderer_script()
-        if not renderer_script.is_file():
-            raise RuntimeError(f"EVA renderer script not found: {renderer_script}")
-        if not (self.asset_dir / "index.html").is_file():
-            raise RuntimeError(f"Local eva-title assets not found: {self.asset_dir}")
-        module_path = self._resolve_playwright_module()
-        self.responses = queue.Queue()
-        self.stderr_lines.clear()
-        self.process = subprocess.Popen(
-            [
-                self.node_path,
-                str(renderer_script),
-                "--assets",
-                str(self.asset_dir),
-                "--playwright-module",
-                module_path,
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-        )
-        threading.Thread(target=self._read_stdout, name="eva-renderer-stdout", daemon=True).start()
-        threading.Thread(target=self._read_stderr, name="eva-renderer-stderr", daemon=True).start()
-        try:
-            ready = self.responses.get(timeout=20)
-        except queue.Empty as exc:
-            self.close()
-            raise RuntimeError("EVA renderer startup timed out") from exc
-        if not ready.get("ok") or ready.get("type") != "ready":
-            self.close()
-            raise RuntimeError(f"EVA renderer failed to start: {ready}")
-
-    def close(self) -> None:
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-        self.process = None
-
-    def render(
-        self,
-        *,
-        texts: tuple[str, ...],
-        output_path: Path,
-        timeout_seconds: int,
-        layout: str = "e1",
-    ) -> dict[str, Any]:
-        with self.lock:
-            if not self.process or self.process.poll() is not None:
-                self.close()
-                self._start()
-            assert self.process and self.process.stdin
-            request_id = f"eva-{time.time_ns()}"
-            self.process.stdin.write(
-                json.dumps(
-                    {"id": request_id, "layout": layout, "texts": list(texts), "outputPath": str(output_path)},
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-            self.process.stdin.flush()
-            try:
-                response = self.responses.get(timeout=timeout_seconds)
-            except queue.Empty:
-                details = "\n".join(self.stderr_lines)
-                self.close()
-                return {"ok": False, "error": f"renderer timed out after {timeout_seconds}s", "stderr": details}
-            if response.get("id") != request_id:
-                return {"ok": False, "error": "renderer response id mismatch", "response": response}
-            if not response.get("ok"):
-                return {"ok": False, "error": response.get("error", "renderer failed")}
-            return {"ok": True, "output_path": response.get("outputPath")}
-
-
-def get_eva_title_renderer(*, asset_dir: Path, node_path: str = "", playwright_module: str = "") -> EvaTitleRendererClient:
-    global EVA_TITLE_RENDERER_CLIENT
-    with EVA_TITLE_RENDERER_CLIENT_LOCK:
-        if EVA_TITLE_RENDERER_CLIENT is None or EVA_TITLE_RENDERER_CLIENT.asset_dir != asset_dir:
-            if EVA_TITLE_RENDERER_CLIENT is not None:
-                EVA_TITLE_RENDERER_CLIENT.close()
-            EVA_TITLE_RENDERER_CLIENT = EvaTitleRendererClient(
-                asset_dir=asset_dir,
-                node_path=node_path,
-                playwright_module=playwright_module,
-            )
-        return EVA_TITLE_RENDERER_CLIENT
-
-
-class EvaTitleStaticRequestHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A003 - inherited stdlib API.
-        return
-
-    def do_GET(self) -> None:  # noqa: N802 - inherited stdlib API.
-        parsed = urllib.parse.urlparse(self.path)
-        if parsed.path != "/api/fontmin":
-            super().do_GET()
-            return
-        target_url = f"https://lab.magiconch.com/api/fontmin?{parsed.query}"
-        try:
-            with urllib.request.urlopen(target_url, timeout=20) as response:
-                body = response.read()
-                content_type = response.headers.get("Content-Type", "font/woff")
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
-            self.send_error(502, "Unable to fetch upstream font subset")
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-
-def default_eva_title_local_dir() -> Path:
-    script_path = Path(__file__).resolve()
-    candidates = [
-        script_path.parents[2] / "vendor/eva-title/html",
-        script_path.parent.parent / "vendor/eva-title/html",
-        script_path.parent / "eva-title",
-    ]
-    return next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])
-
-
-def default_eva_title_help_image() -> Path:
-    script_path = Path(__file__).resolve()
-    candidates = [
-        script_path.parents[2] / "vendor/eva-title/html/layout-help.png",
-        script_path.parent / "eva-title" / "layout-help.png",
-        script_path.parent.parent / "vendor/eva-title/html/layout-help.png",
-    ]
-    return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
-
-
-def start_eva_title_static_server(root_dir: Path) -> tuple[http.server.ThreadingHTTPServer, threading.Thread, str]:
-    handler = functools.partial(EvaTitleStaticRequestHandler, directory=str(root_dir))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    server.daemon_threads = True
-    thread = threading.Thread(target=server.serve_forever, name="eva-title-static-server", daemon=True)
-    thread.start()
-    port = int(server.server_address[1])
-    return server, thread, f"http://127.0.0.1:{port}"
 
 
 def render_eva_title_image(
@@ -937,12 +722,11 @@ def render_eva_title_image(
     segmentation_timeout_seconds: int,
     local_dir: str = "",
     node_path: str = "",
-    playwright_module: str = "",
     render_timeout_seconds: int = 45,
     layout: str = "e1",
     explicit_segments: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Render with itorr/eva-title's own browser Canvas rather than a visual approximation."""
+    """Render with the local native Canvas EVA renderer."""
     started_at = time.monotonic()
     # EVA layouts use compact title blocks. Normalize before validation and LLM segmentation
     # so punctuation cannot be lost or moved by a later layout decision.
@@ -997,25 +781,24 @@ def render_eva_title_image(
         else semantic_segments
     )
 
-    renderer_dir = Path(local_dir).expanduser() if local_dir.strip() else default_eva_title_local_dir()
-    if not (renderer_dir / "index.html").is_file():
-        return {"ok": False, "error": f"Local eva-title assets not found: {renderer_dir}"}
+    renderer_dir = Path(local_dir).expanduser() if local_dir.strip() else default_eva_title_renderer_script().parent.parent
+    renderer_script = renderer_dir / "scripts/render-eva-title.mjs"
+    if not renderer_script.is_file():
+        return {"ok": False, "error": f"Local EVA renderer not found: {renderer_script}"}
     output_dir.mkdir(parents=True, exist_ok=True)
     title_hash = hashlib.sha256(clean_title.encode("utf-8")).hexdigest()[:10]
     image_path = output_dir / f"eva-title-{layout}-{datetime.now():%Y%m%d-%H%M%S}-{title_hash}.png"
-    renderer = get_eva_title_renderer(
-        asset_dir=renderer_dir,
-        node_path=node_path,
-        playwright_module=playwright_module,
-    )
-    render_result = renderer.render(
-        texts=texts,
-        output_path=image_path,
-        timeout_seconds=render_timeout_seconds,
-        layout=layout,
-    )
+    command = [
+        node_path or shutil.which("node") or "node",
+        str(renderer_script),
+        "--layout", layout,
+        "--texts", json.dumps(list(texts), ensure_ascii=False),
+        "--output", str(image_path),
+        "--font", font_path or DEFAULT_EVA_TITLE_FONT_PATH,
+    ]
+    render_result = run_local_command(command, render_timeout_seconds)
     if not render_result.get("ok") or not image_path.is_file():
-        return {"ok": False, "error": "upstream eva-title canvas export failed", "renderer": render_result}
+        return {"ok": False, "error": "native EVA canvas export failed", "renderer": render_result}
 
     elapsed_seconds = time.monotonic() - started_at
     return {
@@ -1025,7 +808,7 @@ def render_eva_title_image(
         "layout": layout,
         "segments": list(semantic_segments),
         "texts": list(texts),
-        "renderer": "itorr/eva-title",
+        "renderer": "native-canvas",
         "segmentation_source": segmentation.get("source"),
         "segmentation_model": segmentation.get("model"),
         "elapsed_seconds": elapsed_seconds,
@@ -1956,7 +1739,6 @@ def run_listener(args: argparse.Namespace, config: dict[str, str]) -> None:
     eva_segmentation_model = config.get("OPENAI_EVA_SEGMENTATION_MODEL", "").strip() or model
     eva_title_local_dir = config.get("EVA_TITLE_LOCAL_DIR", "").strip()
     eva_title_node_path = config.get("EVA_TITLE_NODE_PATH", "")
-    eva_title_playwright_module = config.get("EVA_TITLE_PLAYWRIGHT_MODULE", "")
     eva_title_render_timeout_seconds = int(config.get("EVA_TITLE_RENDER_TIMEOUT_SECONDS", "45"))
     timeout_seconds = int(config.get("OPENAI_TIMEOUT_SECONDS", "45"))
     system_prompt = config.get("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT)
@@ -2148,33 +1930,7 @@ def run_listener(args: argparse.Namespace, config: dict[str, str]) -> None:
                 if eva_request["kind"] == "error":
                     result = {"ok": False, "error": "invalid eva title request", "output_text": eva_request["error"]}
                 elif eva_request["kind"] == "help":
-                    help_image = default_eva_title_help_image()
-                    if not help_image.is_file():
-                        result = {
-                            "ok": False,
-                            "error": f"EVA layout help image is missing: {help_image}",
-                            "output_text": "EVA 版式帮助图暂不可用，请稍后再试。",
-                        }
-                    else:
-                        upload_result = upload_image_to_lark(help_image, identity)
-                        action_rows.append({"type": "eva_title_help_upload", "result": upload_result})
-                        image_key = upload_result.get("stdout", {}).get("data", {}).get("image_key")
-                        if image_key:
-                            image_reply_result = reply_with_image(
-                                message_id=message_id,
-                                image_key=image_key,
-                                identity=identity,
-                                idempotency_key=idempotency_key("lark-ai-eva-help-image", key),
-                                reply_in_thread=reply_in_thread,
-                            )
-                            action_rows.append({"type": "eva_title_help_image_reply", "result": image_reply_result})
-                            result = {"ok": True, "image_generated": False, "output_text": eva_title_help_text()}
-                        else:
-                            result = {
-                                "ok": False,
-                                "error": "EVA help image uploaded but no image_key returned",
-                                "output_text": "EVA 版式帮助图上传失败，请稍后再试。",
-                            }
+                    result = {"ok": True, "image_generated": False, "output_text": eva_title_help_text()}
                 else:
                     result = render_eva_title_image(
                         title=eva_request["title"],
@@ -2187,7 +1943,6 @@ def run_listener(args: argparse.Namespace, config: dict[str, str]) -> None:
                         segmentation_timeout_seconds=min(timeout_seconds, 20),
                         local_dir=eva_title_local_dir,
                         node_path=eva_title_node_path,
-                        playwright_module=eva_title_playwright_module,
                         render_timeout_seconds=eva_title_render_timeout_seconds,
                         explicit_segments=eva_request.get("segments"),
                     )

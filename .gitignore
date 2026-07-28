@@ -1,0 +1,9 @@
+node_modules/
+coverage/
+*.png
+!.github/*.png
+.env
+logs/
+state/
+*.otf
+*.ttf
