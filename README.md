@@ -2,6 +2,18 @@
 
 一个可安装到 Hermes 的本地 EVA 标题卡 skill。它直接运行 [itorr/eva-title](https://github.com/itorr/eva-title) 的 `layouts.js` 与 `make.js`，仅用轻量原生 Canvas/Skia 兼容层替代浏览器 DOM。16 种版式的坐标、缩放、居中、颜色、阴影、噪点和 640×480 输出均由 vendor 代码决定；运行时不需要 Chrome、Playwright、网页服务或远程字体代理。
 
+## 效果预览
+
+`/eva --e24 测试`：
+
+![EVA e24 测试图](.github/eva-e24-test.png)
+
+`/eva --help`：
+
+![EVA 标题卡 16 种版式帮助图](.github/eva-help.png)
+
+以上图片由仓库内的原生渲染脚本生成，不包含字体文件。
+
 ## Hermes
 
 安装 skill 源后，使用以下标识安装到 `~/.hermes/skills/self-built/eva/`：
