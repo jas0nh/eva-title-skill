@@ -1,43 +1,88 @@
-# EVA Title Skill
+# EVA Title Card Generator
 
-一个可安装到 Hermes 的本地 EVA 标题卡 skill。它直接运行 [itorr/eva-title](https://github.com/itorr/eva-title) 的 `layouts.js` 与 `make.js`，仅用轻量原生 Canvas/Skia 兼容层替代浏览器 DOM。16 种版式的坐标、缩放、居中、颜色、阴影、噪点和 640×480 输出均由 vendor 代码决定；运行时不需要 Chrome、Playwright、网页服务或远程字体代理。
+**A browser-free Neon Genesis Evangelion title-card generator for Hermes and Node.js. Render all 16 original layouts locally with native Canvas/Skia — no Chrome, Playwright, web server, or remote font proxy.**
 
-## 效果预览
+**English** · [简体中文](README.zh-CN.md)
 
-`/eva --e24 测试`：
+![Sixteen EVA title-card layouts rendered locally](.github/eva-help.png)
 
-![EVA e24 测试图](.github/eva-e24-test.png)
+## Why this version?
 
-`/eva --help`：
+The excellent upstream [`itorr/eva-title`](https://github.com/itorr/eva-title) is browser-based. This project keeps its original `layouts.js` and `make.js` geometry while adding:
 
-![EVA 标题卡 16 种版式帮助图](.github/eva-help.png)
+- **Native local rendering** with `@napi-rs/canvas` / Skia
+- **All 16 upstream layouts**, including their coordinates, scale, shadows, color, and noise
+- **A standalone Node.js CLI** that exports deterministic 640×480 PNG files
+- **A Hermes `/eva` skill command** with segmentation, layout selection, and a visual help sheet
+- **No browser or web service** in the rendering path
 
-以上图片由仓库内的原生渲染脚本生成，不包含字体文件。
+<p align="center">
+  <img src=".github/eva-e24-test.png" width="640" alt="EVA e24 layout rendering the Chinese word test">
+</p>
 
-## Hermes
+## Requirements
 
-安装 skill 源后，使用以下标识安装到 `~/.hermes/skills/self-built/eva/`：
+| Requirement | Notes |
+|---|---|
+| macOS | Current font discovery targets the user's macOS Fonts directory |
+| Node.js | Node 18 or newer recommended |
+| Matisse font | Supply your own licensed `FOT-Matisse Pro EB.otf`; this repository does not distribute it |
+| Source Han Serif SC Heavy | Open-source fallback for glyphs absent from Matisse |
+| Hermes | Optional; the renderer also works as a standalone Node CLI |
+
+Install both fonts in `~/Library/Fonts/`, or pass another compatible font file with `--font`. Missing required fonts produce an explicit error instead of silently substituting a different visual style.
+
+## Standalone Node.js CLI
+
+```bash
+git clone https://github.com/jas0nh/eva-title-skill.git
+cd eva-title-skill/skills/eva
+npm ci
+node scripts/render-eva-title.mjs \
+  --layout e24 \
+  --texts '["测试"]' \
+  --output /tmp/eva-title.png
+```
+
+The output is a local 640×480 PNG.
+
+## Install as a Hermes skill
 
 ```bash
 hermes skills install jas0nh/eva-title-skill/skills/eva --category self-built
+cd ~/.hermes/skills/self-built/eva
+npm ci --omit=dev
+node scripts/eva-command.mjs --command '--help' --output-dir /tmp/eva-output
 ```
 
-进入已安装目录后运行一次 `npm ci --omit=dev`。渲染例子：
+Start a new Hermes session if needed, then use:
+
+```text
+/eva --help
+/eva --e24 TEST
+/eva --e1 TOP|VERTICAL|HORIZONTAL
+```
+
+`eva-command.mjs` owns command parsing, punctuation cleanup, semantic segmentation, help-sheet generation, and the final `MEDIA:` output used by Hermes.
+
+## Layout fidelity
+
+The renderer runs the upstream layout and drawing functions directly. A lightweight native compatibility layer replaces browser DOM and Canvas APIs, but does not redraw the layouts from scratch. Simplified Chinese is transformed with the upstream mapping before glyph fallback.
+
+Run the regression suite from `skills/eva/`:
 
 ```bash
-node scripts/render-eva-title.mjs --layout e24 --texts '["测试"]' --output /tmp/eva-test.png
+npm test
 ```
 
-Hermes 中安装后会注册 `/eva` skill 命令。支持 `/eva --e24 测试`、`/eva --e1 顶部|竖排|横排` 和 `/eva --help`；命令解析、清洗、断句顺序、帮助总览图及 `MEDIA:` 输出均由 `scripts/eva-command.mjs` 统一处理。
+## Integrations
 
-## 本机字体
+`adapters/feishu/` is an optional transport layer. It invokes the same one-shot local CLI and expects credentials to be injected by its runtime; it does not read the macOS Keychain.
 
-该 skill 不携带字体。安装者须拥有 Matisse 使用授权，并将 `FOT-Matisse Pro EB.otf` 安装到当前 macOS 用户的 `~/Library/Fonts/`；同时安装开源的 `SourceHanSerifSC-Heavy.otf`。渲染器会按上游映射先将简体转繁体、优先使用 Matisse，缺字才回退到思源宋体 Heavy；也可以用 `--font` 指向另一个本机 Matisse 文件。字体缺失时渲染会失败，而不是使用无提示的替代字形。
+## Attribution and license
 
-## 飞书 adapter
+Layout implementations, Canvas drawing functions, character mappings, and the Matisse glyph inventory come from [`itorr/eva-title`](https://github.com/itorr/eva-title) under its MIT license; see [`third_party/eva-title-MIT-LICENSE`](third_party/eva-title-MIT-LICENSE). Source Han Serif is maintained by Adobe under its own open-source license. Local commercial font files must not be committed or redistributed.
 
-`adapters/feishu/` 是可选传输层，不属于 Hermes skill 包。它调用同一个一次性原生 CLI；访问凭据只能由其运行环境注入，adapter 不再读取 macOS Keychain。
+This is an unofficial fan-made developer tool and is not affiliated with or endorsed by the Evangelion rights holders.
 
-## 归属与许可证
-
-版式实现、Canvas 绘制函数、简繁映射和 Matisse 字形清单来自 [itorr/eva-title](https://github.com/itorr/eva-title)，随附 vendor/参考文件适用上游 MIT 许可证，见 [third_party/eva-title-MIT-LICENSE](third_party/eva-title-MIT-LICENSE)。思源宋体来自 [Adobe Source Han Serif](https://github.com/adobe-fonts/source-han-serif)，本仓库不得提交或分发本机字体文件。
+The original wrapper code in this repository is released under the [MIT License](LICENSE).
